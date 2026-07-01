@@ -1,0 +1,19 @@
+{
+  "name": "ps99-pet-hatch-tracker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pet Simulator 99 inventory diff tracker with Discord bot notifications.",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "ws": "^8.18.3"
+  }
+}
