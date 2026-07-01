@@ -27,9 +27,9 @@ async function main() {
 
   tracker.start();
 
-  app.listen(config.port, () => {
-    console.log(`PS99 tracker listening at http://localhost:${config.port}`);
-    console.log(`Connect BIG Games account at http://localhost:${config.port}/auth/start`);
+  app.listen(config.port, "0.0.0.0", () => {
+    console.log(`PS99 tracker listening on 0.0.0.0:${config.port}`);
+    console.log(`Connect BIG Games account at /auth/start`);
   });
 
   startDiscordWithRetry(discord);
