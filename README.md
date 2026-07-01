@@ -124,8 +124,12 @@ Add custom pets from Discord with slash commands:
 /track pet:Huge Cosmic Axolotl
 /untrack pet:Huge Cosmic Axolotl
 /tracked
+/check
+/testalert
 ```
 
 `/tracked` shows the tracked pet list plus the latest known count, category, rarity, RAP, and exists count from your latest inventory snapshot.
+`/check` runs the inventory comparison immediately.
+`/testalert` sends a test message to `DISCORD_CHANNEL_ID`, which helps confirm alert pings work.
 
 The tracker matches exact custom pet names first, then keyword matches against `category`, `displayName`, and `id`.
