@@ -162,4 +162,4 @@ function normalizePetName(name) {
   return String(name || "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-module.exports = { createTracker, formatNumber, getTrackedPetDetails };
+module.exports = { createTracker, formatNumber };
