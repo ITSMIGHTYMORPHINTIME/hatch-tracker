@@ -75,26 +75,6 @@ function formatNotification(token, changes, discordUserId, refresh) {
   return `${mention}New watched PS99 pet detected for **${token.displayName || token.username || token.robloxUserId}**:\n${lines.join("\n")}${refreshNote}`;
 }
 
-function getTrackedPetDetails(store) {
-  const trackedPets = store.getTrackedPets();
-  const snapshots = Object.values(store.readAllSnapshots?.() || {});
-  return trackedPets.map((pet) => {
-    const matches = snapshots
-      .flatMap((snapshot) => Object.values(snapshot))
-      .filter((item) => normalizePetName(item.displayName) === pet.normalized);
-    const count = matches.reduce((sum, item) => sum + Number(item.count || 0), 0);
-    const sample = matches.find(Boolean);
-    return {
-      ...pet,
-      count,
-      category: sample?.category || "Unknown",
-      rarity: sample?.rarity || "Unknown",
-      rap: sample?.rap || 0,
-      exists: sample?.exists || 0
-    };
-  });
-}
-
 function createTracker({ config, store, bigGames, notifier }) {
   let running = false;
 
@@ -108,7 +88,12 @@ function createTracker({ config, store, bigGames, notifier }) {
     if (Object.keys(previous).length === 0) {
       console.log(`Saved first inventory baseline for ${token.displayName || token.robloxUserId}.`);
       store.saveSnapshot(snapshotKey, current);
-      return;
+      return {
+        player: token.displayName || token.username || token.robloxUserId,
+        baseline: true,
+        changes: [],
+        refresh: inventory.refresh
+      };
     }
 
     if (changes.length > 0) {
@@ -116,6 +101,12 @@ function createTracker({ config, store, bigGames, notifier }) {
     }
 
     store.saveSnapshot(snapshotKey, current);
+    return {
+      player: token.displayName || token.username || token.robloxUserId,
+      baseline: false,
+      changes,
+      refresh: inventory.refresh
+    };
   }
 
   async function baselineToken(token) {
@@ -128,15 +119,21 @@ function createTracker({ config, store, bigGames, notifier }) {
   async function checkAll() {
     if (running) return;
     running = true;
+    const results = [];
     try {
       const tokens = store.getTokens();
       for (const token of tokens) {
         try {
-          await checkToken(token);
+          results.push(await checkToken(token));
         } catch (error) {
           console.error(`Tracker check failed for ${token.displayName || token.robloxUserId}:`, error.message);
+          results.push({
+            player: token.displayName || token.username || token.robloxUserId,
+            error: error.message
+          });
         }
       }
+      return results;
     } finally {
       running = false;
     }
