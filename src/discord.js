@@ -34,6 +34,16 @@ const COMMANDS = [
     name: "tracked",
     description: "Show currently tracked pets and their latest known data.",
     type: 1
+  },
+  {
+    name: "check",
+    description: "Run an inventory check right now.",
+    type: 1
+  },
+  {
+    name: "testalert",
+    description: "Send a test alert to the configured alert channel.",
+    type: 1
   }
 ];
 
@@ -191,12 +201,13 @@ function createDiscordBot({ config, store, tracker, watch }) {
 
     try {
       if (command === "track") {
+        await deferResponse(interaction);
         const result = store.trackPet(petName);
         const status = result.created
           ? `Now tracking **${result.pet.name}**. I refreshed the baseline so existing copies do not trigger fake alerts.`
           : `**${result.pet.name}** is already being tracked.`;
-        await respond(interaction, status);
-        if (result.created) void tracker.baselineAll();
+        if (result.created) await tracker.baselineAll();
+        await editResponse(interaction, status);
         return;
       }
 
@@ -208,10 +219,25 @@ function createDiscordBot({ config, store, tracker, watch }) {
 
       if (command === "tracked") {
         await respond(interaction, formatTrackedPets(store, watch));
+        return;
+      }
+
+      if (command === "check") {
+        await deferResponse(interaction);
+        const results = await tracker.checkAll();
+        await editResponse(interaction, formatCheckResults(results));
+        return;
+      }
+
+      if (command === "testalert") {
+        await deferResponse(interaction);
+        const mention = config.userId ? `<@${config.userId}> ` : "";
+        await rest.send(`${mention}Test alert from the PS99 hatch tracker. If you see this, alert channel pings work.`);
+        await editResponse(interaction, "Sent a test alert to the configured alert channel.");
       }
     } catch (error) {
       console.error(`Discord command /${command} failed:`, error.message);
-      await respond(interaction, `Command failed: ${error.message}`);
+      await safeInteractionError(interaction, `Command failed: ${error.message}`);
     }
   }
 
@@ -232,6 +258,50 @@ function createDiscordBot({ config, store, tracker, watch }) {
     });
   }
 
+  async function deferResponse(interaction) {
+    const response = await fetch(`${DISCORD_API}/interactions/${interaction.id}/${interaction.token}/callback`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        type: 5,
+        data: {
+          flags: EPHEMERAL
+        }
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Discord defer failed (${response.status}): ${await response.text()}`);
+    }
+  }
+
+  async function editResponse(interaction, content) {
+    const response = await fetch(`${DISCORD_API}/webhooks/${interaction.application_id}/${interaction.token}/messages/@original`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        content: truncateDiscordMessage(content),
+        allowed_mentions: { parse: [] }
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Discord response edit failed (${response.status}): ${await response.text()}`);
+    }
+  }
+
+  async function safeInteractionError(interaction, content) {
+    try {
+      await editResponse(interaction, content);
+    } catch {
+      await respond(interaction, content);
+    }
+  }
+
   return {
     send: rest.send,
     start
@@ -247,6 +317,22 @@ function formatTrackedPets(store, watch) {
   const trackedPets = store.getTrackedPets();
   const defaultKeywords = watch.keywords.join(", ");
   const lines = [`Automatic keyword tracking: ${defaultKeywords || "none"}`];
+  const snapshots = Object.values(store.readAllSnapshots());
+  const automatic = findAutomaticTrackedDetails(watch, snapshots);
+
+  if (automatic.length > 0) {
+    lines.push("", "Automatic tracked pets seen in your inventory:");
+    for (const item of automatic.slice(0, 25)) {
+      const rap = item.rap ? formatNumber(item.rap) : "unknown";
+      const exists = item.exists ? formatNumber(item.exists) : "unknown";
+      lines.push(`- ${item.displayName} | owned: ${formatNumber(item.count)} | ${item.category} | ${item.rarity} | RAP: ${rap} | exists: ${exists}`);
+    }
+    if (automatic.length > 25) {
+      lines.push(`...and ${automatic.length - 25} more automatic matches.`);
+    }
+  } else {
+    lines.push("", "No automatic Huge/Titanic/Gargantuan/Secret pets have been seen in your saved inventory snapshot yet.");
+  }
 
   if (trackedPets.length === 0) {
     lines.push("", "No custom pets are tracked yet. Use `/track pet:<name>` to add one.");
@@ -254,7 +340,6 @@ function formatTrackedPets(store, watch) {
   }
 
   lines.push("", "Custom tracked pets:");
-  const snapshots = Object.values(store.readAllSnapshots());
 
   for (const pet of trackedPets) {
     const details = findTrackedPetDetails(pet, snapshots);
@@ -269,6 +354,36 @@ function formatTrackedPets(store, watch) {
   }
 
   return lines.join("\n");
+}
+
+function findAutomaticTrackedDetails(watch, snapshots) {
+  const byName = new Map();
+  const items = snapshots.flatMap((snapshot) => Object.values(snapshot));
+
+  for (const item of items) {
+    const searchable = [item.category, item.displayName, item.id].filter(Boolean).join(" ").toLowerCase();
+    const matched = watch.keywords.some((value) => searchable.includes(value.toLowerCase()));
+    if (!matched) continue;
+
+    const key = normalizePetName(item.displayName);
+    const existing = byName.get(key);
+    if (existing) {
+      existing.count += Number(item.count || 0);
+      existing.rap = Math.max(existing.rap, Number(item.rap || 0));
+      existing.exists = Math.max(existing.exists, Number(item.exists || 0));
+    } else {
+      byName.set(key, {
+        displayName: item.displayName,
+        count: Number(item.count || 0),
+        category: item.category || "Unknown",
+        rarity: item.rarity || "Unknown",
+        rap: Number(item.rap || 0),
+        exists: Number(item.exists || 0)
+      });
+    }
+  }
+
+  return Array.from(byName.values()).sort((a, b) => a.displayName.localeCompare(b.displayName));
 }
 
 function findTrackedPetDetails(pet, snapshots) {
@@ -296,6 +411,43 @@ function normalizePetName(name) {
 
 function formatNumber(value) {
   return new Intl.NumberFormat("en-US").format(value);
+}
+
+function formatCheckResults(results) {
+  if (!results) {
+    return "A check is already running. Try again in a moment.";
+  }
+
+  if (results.length === 0) {
+    return "No BIG Games account is connected yet. Open your Railway `/auth/start` URL and approve the app first.";
+  }
+
+  const lines = ["Manual inventory check finished:"];
+
+  for (const result of results) {
+    if (result.error) {
+      lines.push(`- ${result.player}: error - ${result.error}`);
+      continue;
+    }
+
+    const refresh = result.refresh
+      ? ` | cache: ${result.refresh.skipped || "unknown"} | quota ${result.refresh.used ?? "?"}/${result.refresh.limit ?? "?"}`
+      : "";
+
+    if (result.baseline) {
+      lines.push(`- ${result.player}: saved first baseline, no alert sent${refresh}`);
+      continue;
+    }
+
+    if (result.changes.length === 0) {
+      lines.push(`- ${result.player}: no new tracked pet count increases found${refresh}`);
+      continue;
+    }
+
+    lines.push(`- ${result.player}: found ${result.changes.length} tracked increase(s) and sent alert${refresh}`);
+  }
+
+  return lines.join("\n");
 }
 
 function truncateDiscordMessage(message) {
