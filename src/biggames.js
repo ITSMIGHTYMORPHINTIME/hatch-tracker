@@ -19,6 +19,7 @@ function createState() {
 
 function createAuthorizeUrl(config, state, challenge) {
   const url = new URL("/oauth/authorize", BIG_GAMES_AUTH);
+  url.searchParams.set("response_type", "code");
   url.searchParams.set("client_id", config.clientId);
   url.searchParams.set("redirect_uri", config.redirectUri);
   url.searchParams.set("scope", config.scopes.join(" "));
